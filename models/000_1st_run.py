@@ -30,7 +30,7 @@ if update_check_needed:
     try:
         import core as s3base
     except Exception as e:
-        errors.append(e.message)
+        errors.append(str(e))
 
     import sys
 
