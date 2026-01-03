@@ -1,46 +1,47 @@
-# Impact Analysis – Organisation Controller
+# Impact Analysis – Organisation Controller (Call Graph)
 
 ## 1. Addressed Component / Module
 
-This impact analysis focuses on the **Organisation Registry** module in the
-Sahana-Eden legacy system. Specifically, the analysis targets the
-`organisation()` RESTful CRUD controller function located in
-`controllers/org.py`.
+This impact analysis focuses on the **Organisation Registry** module of the
+Sahana-Eden legacy system.
 
-The `organisation()` function serves as the main entry point for organisation
-management, handling operations such as creating, editing, and listing
-organisations.
+The specific component analysed is the `organisation()` RESTful CRUD controller
+function located in:
 
----
+- `controllers/org.py`
 
-## 2. Impact Analysis Graph (Call Graph)
-
-**Graph Type:** Call Graph
-
-The Call Graph illustrates the execution flow and dependencies starting from
-an incoming HTTP request to the organisation management endpoint. The main
-call sequence is as follows:
-
-- User HTTP request to `/org/organisation`
-- `organisation()` controller function in `controllers/org.py`
-- `s3db.org_organisation_controller()` in the model/controller layer
-- CRUD framework (S3CRUD)
-- Database tables related to organisations (e.g. `org_organisation`)
-- Response returned to the client (HTML or JSON)
-
-This graph highlights how control is passed from the controller layer to the
-model and database layers during organisation-related operations.
+The `organisation()` function is the primary entry point for managing
+organisation records in the system. It handles user requests related to
+creating, viewing, updating, and deleting organisation data.
 
 ---
 
-## 3. Impact and Insights
+## 2. Impact Analysis Graph Type
 
-The impact analysis shows that the `organisation()` function is a key
-dependency within the organisation management workflow. Any modification to
-this controller or the underlying model-layer controller may have ripple
-effects on organisation creation, editing, and listing functionalities.
+**Graph Type:** Call Graph  
+**Analysis Method:** Dependency-based Impact Analysis (Chapter 6)
 
-Changes to the organisation data schema or CRUD logic could also affect other
-modules that rely on organisation data. Therefore, modifications to this
-function should be carefully assessed to avoid unintended side effects across
-the system.
+According to Chapter 6 of the lecture notes, a Call Graph is a directed graph
+where:
+
+- Nodes represent functions or system components
+- Directed edges represent invocation (calling) relationships
+- A change in a function may impact all nodes reachable from it in the graph
+
+---
+
+## 3. Call Graph Representation
+
+### 3.1 Call Graph Diagram
+
+```mermaid
+graph TD
+    A[organisation() Controller<br/>controllers/org.py]
+    B[s3db.org_organisation_controller()<br/>Model Layer]
+    C[S3CRUD Framework]
+    D[org_organisation<br/>Database Table]
+
+    A -->|invokes| B
+    B -->|uses| C
+    C -->|accesses| D
+
