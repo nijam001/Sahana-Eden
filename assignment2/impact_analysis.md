@@ -34,12 +34,15 @@ where:
 
 ### 3.1 Call Graph Diagram
 
-```mermaid
 graph TD
-    A[organisation() Controller<br/>controllers/org.py]
-    B[s3db.org_organisation_controller()<br/>Model Layer]
-    C[S3CRUD Framework]
-    D[org_organisation<br/>Database Table]
+    A["organisation() controller (controllers/org.py)"]
+    B["s3db.org_organisation_controller() (Model layer)"]
+    C["S3CRUD framework"]
+    D["org_organisation table"]
+
+    A -->|invokes| B
+    B -->|uses| C
+    C -->|accesses| D
 
     A -->|invokes| B
     B -->|uses| C
