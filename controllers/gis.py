@@ -696,19 +696,38 @@ def ldata():
         This reduces database queries for frequently accessed location hierarchies.
     """
 
+    # =========================================================================
+    # CORRECTIVE MAINTENANCE: Input Validation & Error Handling
+    # =========================================================================
     req_args = request.args
+    
+    # Validate location_id is provided and is numeric
     try:
         location_id = req_args[0]
-    except:
-        raise HTTP(400)
+        # Validate it's a valid integer
+        int(location_id)  # Will raise ValueError if not numeric
+    except IndexError:
+        # No location_id provided
+        raise HTTP(400, "Missing required parameter: location_id")
+    except ValueError:
+        # location_id is not numeric
+        raise HTTP(400, "Invalid location_id: must be numeric")
 
     s3base.s3_keep_messages()
     response.headers["Content-Type"] = "application/json"
 
+    # Validate output_level if provided
     if len(req_args) > 1:
-        output_level = int(req_args[1])
+        try:
+            output_level = int(req_args[1])
+            if output_level < 0 or output_level > 5:
+                raise HTTP(400, "Invalid level: must be between 0 and 5")
+        except ValueError:
+            raise HTTP(400, "Invalid level parameter: must be numeric")
     else:
         output_level = None
+    # =========================================================================
+
 
     # Translate options using gis_location_name?
     language = session.s3.language
@@ -768,12 +787,14 @@ def ldata():
                 try:
                     id_level = int(_locations.as_dict(key="gis_location.id")[_loc_id]["gis_location"]["level"][1:])
                 except:
-                    return "{}"
+                    # CORRECTIVE MAINTENANCE: Return 404 for non-existent location
+                    raise HTTP(404, "Location not found: %s" % _loc_id)
             else:
                 try:
                     id_level = int(_locations.as_dict()[_loc_id]["level"][1:])
                 except:
-                    return "{}"
+                    # CORRECTIVE MAINTENANCE: Return 404 for non-existent location
+                    raise HTTP(404, "Location not found: %s" % _loc_id)
             _out_level = id_level + 1
         
         search_level = "L%s" % _out_level
