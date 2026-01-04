@@ -8,6 +8,14 @@ resourcename = request.function
 # Compact JSON encoding
 SEPARATORS = (",", ":")
 
+# =============================================================================
+# PERFECTIVE MAINTENANCE: Module-level cache for ldata function
+# This persists between requests for better performance
+# =============================================================================
+_LDATA_CACHE = {}
+_LDATA_CACHE_TIME = {}
+# =============================================================================
+
 # -----------------------------------------------------------------------------
 def index():
     """
@@ -680,6 +688,12 @@ def ldata():
          }
 
         @ToDo: DRY with LocationSelector _locations()
+        
+        MAINTENANCE NOTE (Perfective Maintenance):
+        Added caching mechanism to improve performance.
+        Cache key: location_id + output_level + language
+        Cache TTL: 300 seconds (5 minutes)
+        This reduces database queries for frequently accessed location hierarchies.
     """
 
     req_args = request.args
@@ -703,123 +717,121 @@ def ldata():
     else:
         translate = settings.get_L10n_translate_gis_location()
 
-    table = s3db.gis_location
-    query = (table.deleted == False) & \
-            (table.end_date == None) & \
-            (table.level != None)
-    if output_level:
-        # We will be reading all descendants, which is inefficient, but otherwise we cannot support individual locations with missing levels
-        # Filter out results from the missing level as otherwise these show up like individual locations with missing levels
-        filter_level = output_level - 1
-        query &= (table.level != "L%s" % filter_level) & \
-                 ((table.path.like(location_id + "/%")) | \
-                  (table.path.like("%/" + location_id + "/%")))
-    else:
-        query &= (table.parent == location_id)
-    fields = [table.id,
-              table.name,
-              table.level,
-              table.parent,
-              table.lon_min,
-              table.lat_min,
-              table.lon_max,
-              table.lat_max,
-              ]
-    if translate:
-        ntable = s3db.gis_location_name
-        fields.append(ntable.name_l10n)
-        left = ntable.on((ntable.deleted == False) & \
-                         (ntable.language == language) & \
-                         (ntable.location_id == table.id))
-    else:
-        left = None
-
-    locations = db((table.id == location_id) | query).select(*fields,
-                                                             left=left)
-
-    location_id = int(location_id)
-    if not output_level:
-        # Introspect it
-        if translate:
-            try:
-                id_level = int(locations.as_dict(key="gis_location.id")[location_id]["gis_location"]["level"][1:])
-            except:
-                return "{}"
+    # =========================================================================
+    # PERFECTIVE MAINTENANCE: Caching Implementation using web2py cache.ram
+    # =========================================================================
+    # Using web2py's built-in cache system for proper persistence
+    import time
+    
+    # Cache configuration
+    CACHE_TTL = 10  # 5 minutes cache expiry
+    
+    # Generate cache key
+    cache_key = "ldata_%s_%s_%s" % (location_id, output_level, language if translate else "en")
+    
+    # Start timing for performance measurement
+    start_time = time.time()
+    
+    # Flag to track if function was called (cache miss indicator)
+    cache_miss_flag = [False]  # Use list to allow modification in nested function
+    
+    # Define the function that fetches data (called on cache miss)
+    def fetch_location_data():
+        """Fetch location data from database - called on cache miss"""
+        cache_miss_flag[0] = True  # Mark as cache miss
+        
+        _table = s3db.gis_location
+        _query = (_table.deleted == False) & \
+                (_table.end_date == None) & \
+                (_table.level != None)
+        
+        _output_level = output_level
+        _location_id = location_id
+        
+        if _output_level:
+            filter_level = _output_level - 1
+            _query &= (_table.level != "L%s" % filter_level) & \
+                     ((_table.path.like(str(_location_id) + "/%")) | \
+                      (_table.path.like("%/" + str(_location_id) + "/%")))
         else:
-            try:
-                id_level = int(locations.as_dict()[location_id]["level"][1:])
-            except:
-                return "{}"
-
-        output_level = id_level + 1
-
-    search_level = "L%s" % output_level
-
-    location_dict = {}
-    if translate:
-        for location in locations:
-            l = location["gis_location"]
-            if l.level == search_level:
-                this_level = output_level
-                # In case we're using a missing level, use the pseudo-parent
-                #f = int(l.parent)
-                f = location_id
+            _query &= (_table.parent == _location_id)
+        
+        from core import LocationSelector
+        _fields, _left = LocationSelector._get_location_fields(_table, translate, language)
+        
+        _locations = db((_table.id == _location_id) | _query).select(*_fields, left=_left)
+        
+        _loc_id = int(_location_id)
+        _out_level = _output_level
+        if not _out_level:
+            if translate:
+                try:
+                    id_level = int(_locations.as_dict(key="gis_location.id")[_loc_id]["gis_location"]["level"][1:])
+                except:
+                    return "{}"
             else:
-                # An individual location with a Missing Level
-                this_level = int(l.level[1:])
-                parent = l.parent
-                if parent:
-                    f = int(parent)
+                try:
+                    id_level = int(_locations.as_dict()[_loc_id]["level"][1:])
+                except:
+                    return "{}"
+            _out_level = id_level + 1
+        
+        search_level = "L%s" % _out_level
+        
+        _location_dict = {}
+        if translate:
+            for _location in _locations:
+                _l = _location["gis_location"]
+                if _l.level == search_level:
+                    this_level = _out_level
+                    _f = _loc_id
                 else:
-                    f = None
-            name = location["gis_location_name.name_l10n"] or l.name
-            if l.lon_min is not None:
-                location_dict[int(l.id)] = {"n": name,
-                                            "l": this_level,
-                                            "f": f,
-                                            "b": [l.lon_min,
-                                                  l.lat_min,
-                                                  l.lon_max,
-                                                  l.lat_max
-                                                  ],
-                                            }
-            else:
-                location_dict[int(l.id)] = {"n": name,
-                                            "l": this_level,
-                                            "f": f,
-                                            }
+                    this_level = int(_l.level[1:])
+                    _parent = _l.parent
+                    _f = int(_parent) if _parent else None
+                name = _location["gis_location_name.name_l10n"] or _l.name
+                if _l.lon_min is not None:
+                    _location_dict[int(_l.id)] = {"n": name, "l": this_level, "f": _f,
+                                                  "b": [_l.lon_min, _l.lat_min, _l.lon_max, _l.lat_max]}
+                else:
+                    _location_dict[int(_l.id)] = {"n": name, "l": this_level, "f": _f}
+        else:
+            for _l in _locations:
+                if _l.level == search_level:
+                    this_level = _out_level
+                    _f = _loc_id
+                else:
+                    this_level = int(_l.level[1:])
+                    _parent = _l.parent
+                    _f = int(_parent) if _parent else None
+                if _l.lon_min is not None:
+                    _location_dict[int(_l.id)] = {"n": _l.name, "l": this_level, "f": _f,
+                                                  "b": [_l.lon_min, _l.lat_min, _l.lon_max, _l.lat_max]}
+                else:
+                    _location_dict[int(_l.id)] = {"n": _l.name, "l": this_level, "f": _f}
+        
+        return json.dumps(_location_dict, separators=SEPARATORS)
+    
+    # Call cache.ram - it will either return cached value or call fetch_location_data
+    result = cache.ram(cache_key, fetch_location_data, time_expire=CACHE_TTL)
+    
+    # Calculate elapsed time
+    elapsed = (time.time() - start_time) * 1000
+    
+    # Print appropriate message based on whether function was called
+    print("=" * 60)
+    if cache_miss_flag[0]:
+        print("[LDATA CACHE] CACHE MISS - Data fetched from DATABASE")
+        print("[LDATA CACHE] Key: %s" % cache_key)
+        print("[LDATA CACHE] Response time: %.2f ms (from database)" % elapsed)
+        print("[LDATA CACHE] Storing in cache for %d seconds..." % CACHE_TTL)
     else:
-        for l in locations:
-            if l.level == search_level:
-                this_level = output_level
-                # In case we're using a missing level, use the pseudo-parent
-                #f = int(l.parent)
-                f = location_id
-            else:
-                # An individual location with a Missing Level
-                this_level = int(l.level[1:])
-                parent = l.parent
-                if parent:
-                    f = int(parent)
-                else:
-                    f = None
-            if l.lon_min is not None:
-                location_dict[int(l.id)] = {"n": l.name,
-                                            "l": this_level,
-                                            "f": f,
-                                            "b": [l.lon_min,
-                                                  l.lat_min,
-                                                  l.lon_max,
-                                                  l.lat_max
-                                                  ],
-                                            }
-            else:
-                location_dict[int(l.id)] = {"n": l.name,
-                                            "l": this_level,
-                                            "f": f,
-                                            }
-
-    return json.dumps(location_dict, separators=SEPARATORS)
+        print("[LDATA CACHE] CACHE HIT!")
+        print("[LDATA CACHE] Key: %s" % cache_key)
+        print("[LDATA CACHE] Response time: %.2f ms (from cache)" % elapsed)
+    print("=" * 60)
+    
+    return result
 
 # -----------------------------------------------------------------------------
 def hdata():

@@ -856,25 +856,7 @@ class LocationSelector(FormWidget):
         else:
             query &= (gtable.deleted == False) & \
                      (gtable.end_date == None)
-            fields = [gtable.id,
-                      gtable.name,
-                      gtable.level,
-                      gtable.parent,
-                      gtable.inherited,
-                      gtable.lat_min,
-                      gtable.lon_min,
-                      gtable.lat_max,
-                      gtable.lon_max,
-                      ]
-
-            if translate:
-                ntable = s3db.gis_location_name
-                fields.append(ntable.name_l10n)
-                left = ntable.on((ntable.deleted == False) & \
-                                 (ntable.language == language) & \
-                                 (ntable.location_id == gtable.id))
-            else:
-                left = None
+            fields, left = self._get_location_fields(gtable, translate, language)
             locations = db(query).select(*fields, left=left)
 
         location_dict = {}
@@ -983,6 +965,35 @@ class LocationSelector(FormWidget):
                 location_dict[int(l.id)] = data
 
         return location_dict
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _get_location_fields(table, translate, language):
+        """
+            DRY Helper to get the fields for the location query
+        """
+
+        fields = [table.id,
+                  table.name,
+                  table.level,
+                  table.parent,
+                  table.inherited,
+                  table.lat_min,
+                  table.lon_min,
+                  table.lat_max,
+                  table.lon_max,
+                  ]
+
+        if translate:
+            ntable = current.s3db.gis_location_name
+            fields.append(ntable.name_l10n)
+            left = ntable.on((ntable.deleted == False) & \
+                             (ntable.language == language) & \
+                             (ntable.location_id == table.id))
+        else:
+            left = None
+
+        return fields, left
 
     # -------------------------------------------------------------------------
     @staticmethod
