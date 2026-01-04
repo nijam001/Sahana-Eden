@@ -674,10 +674,15 @@ def location():
 # -----------------------------------------------------------------------------
 def ldata():
     """
-        Return JSON of location hierarchy suitable for use by LocationSelector:
-            GET '/eden/gis/ldata/' + id
-        If requesting data for a level after a missed level:
-            GET '/eden/gis/ldata/' + id + '/' + level
+        Return JSON of location hierarchy suitable for use by LocationSelector.
+        
+        This function provides hierarchical location data for cascade dropdown 
+        selectors in forms. It supports multi-level geographic hierarchies 
+        (L0=Country, L1=State, L2=District, etc.) and translations.
+        
+        URL Patterns:
+            GET '/eden/gis/ldata/' + id          - Get children of location
+            GET '/eden/gis/ldata/' + id + '/' + level - Get at specific level
 
         Response JSON:
         {id : {'n' : name,
@@ -686,15 +691,34 @@ def ldata():
                'b' : [lon_min, lat_min, lon_max, lat_max]
                }
          }
+        
+        Args:
+            request.args[0] (str): Location ID (required, must be numeric)
+            request.args[1] (str): Output level 0-5 (optional, must be numeric)
+        
+        Returns:
+            str: JSON string containing location hierarchy data
+        
+        Raises:
+            HTTP(400): Missing or invalid location_id parameter
+            HTTP(400): Invalid level parameter (non-numeric or out of range)
+            HTTP(404): Location not found in database
 
         @ToDo: DRY with LocationSelector _locations()
         
-        MAINTENANCE NOTE (Perfective Maintenance):
-        Added caching mechanism to improve performance.
-        Cache key: location_id + output_level + language
-        Cache TTL: 300 seconds (5 minutes)
-        This reduces database queries for frequently accessed location hierarchies.
+        MAINTENANCE NOTES:
+        - Perfective: Added caching mechanism (cache.ram, TTL=300s)
+        - Corrective: Added input validation and proper error responses
+        - Preventive: Added comprehensive documentation and logging
     """
+    
+    # =========================================================================
+    # PREVENTIVE MAINTENANCE: Request Logging
+    # =========================================================================
+    import datetime
+    request_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print("[LDATA LOG] %s - Request received: args=%s" % (request_time, request.args))
+    # =========================================================================
 
     # =========================================================================
     # CORRECTIVE MAINTENANCE: Input Validation & Error Handling

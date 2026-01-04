@@ -6,12 +6,19 @@ This document outlines potential maintenance tasks for the `ldata()` function an
 
 ---
 
-## ✅ Completed: Perfective Maintenance (Caching)
+## ✅ Completed Tasks
 
+### 1. Perfective Maintenance (Caching)
 **Status:** Done  
-**Branch:** `perfective_maintenance_alnijam`
+**Branch:** `maintenance_alnijam`
 
 Added `cache.ram` caching to reduce response time from 15ms to 0ms.
+
+### 2. Corrective Maintenance (Bug Fixes)
+**Status:** Done  
+**Branch:** `maintenance_alnijam`
+
+Fixed input validation, HTTP 400/404 error responses for invalid inputs.
 
 ---
 
