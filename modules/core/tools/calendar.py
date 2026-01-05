@@ -1,4 +1,9 @@
+# Reengineered for Assignment 1:
+# Added documentation, inline comments, and minor refactoring for improved readability.
+# Contributor: Ma wenting
+
 """
+
     Date/Time and Calendar Toolkit
 
     Copyright: 2015-2022 (c) Sahana Software Foundation
@@ -166,14 +171,22 @@ class S3DateTime:
     # -----------------------------------------------------------------------------
     @classmethod
     def to_local(cls, dt):
-        """
-            Convert a date or datetime to local timezone
+          """
+        Convert a datetime or date object into the application's local timezone.
 
-            Args:
-                dt: the date/datetime; if it is tz-naive it is assumed to be in UTC
+        This method handles:
+        - naive datetimes (assumed to be UTC),
+        - date-only values (converted using a fixed breakpoint time),
+        - systems without timezone support (fallback to manual offset),
+        - normalization of tz-aware values.
 
-            Returns:
-                a tz-naive datetime in local timezone
+        Args:
+            dt (datetime.date | datetime.datetime):
+                The date or datetime to convert.
+
+        Returns:
+            datetime.datetime:
+                A timezone-naive datetime adjusted to local time, or None.
         """
 
         if not dt:
@@ -1680,10 +1693,12 @@ def s3_decode_iso_datetime(dtstr):
 
         Note:
             This has "iso" in its name for consistency reasons, but can actually
-            read a variety of formats
+            read a variety of formats supported by python-dateutil.
     """
 
-    # Default seconds/microseconds=zero
+    # Default seconds/microseconds=zero, and 08:00 is used as a
+    # "breakpoint" time to avoid date shifts when converting between
+    # timezones and date-only values.
     DEFAULT = datetime.datetime.utcnow().replace(hour = 8,
                                                  minute = 0,
                                                  second = 0,
@@ -1696,9 +1711,11 @@ def s3_decode_iso_datetime(dtstr):
         raise ValueError("Invalid date/time string: %s (%s)" % (dtstr, type(dtstr)))
 
     if dt.tzinfo is None:
+        # Assume UTC if no timezone is provided in the input
         dt = dt.replace(tzinfo=dateutil.tz.tzutc())
 
     return dt
+
 
 #--------------------------------------------------------------------------
 def s3_encode_iso_datetime(dt):
@@ -1738,27 +1755,72 @@ def s3_utc(dt):
 #--------------------------------------------------------------------------
 class S3DefaultTZ(datetime.tzinfo):
     """
-        A datetime.tzinfo class that can be instantiated from
-        a UTC offset string or integer hours, used for testing and
-        as fallback for s3_get_tzinfo if the client's timezone cannot
-        be determined but an offset is available
+        Fixed-offset timezone implementation used as a simple default/fallback.
+
+        This tzinfo can be instantiated from either:
+        - a UTC offset string (e.g. "+0800", "+08:00", "-5.5"), or
+        - an integer/float hour offset.
+
+        Typical use cases:
+        - in tests, where a predictable fixed-offset timezone is helpful
+        - as a fallback in s3_get_tzinfo when the client's timezone name
+          cannot be determined, but a numeric offset is still available.
+
+        The offset is stored internally as a datetime.timedelta and
+        daylight saving time is always assumed to be zero.
     """
 
     def __init__(self, offset=None):
+        """
+            Initialise a new S3DefaultTZ instance.
+
+            Args:
+                offset:
+                    UTC offset representation passed to
+                    S3DateTime.get_offset_value. This can be:
+                    - a string like "+0800", "+08:00", "-05",
+                    - or a numeric hour value (int/float).
+
+            The resolved offset is stored as a timedelta in minutes/seconds.
+        """
 
         super(S3DefaultTZ, self).__init__()
 
         if offset:
+            # Convert the provided representation into seconds from UTC
             offset_sec = S3DateTime.get_offset_value(offset)
             self._offset = datetime.timedelta(seconds=offset_sec)
         else:
+            # Default to UTC when no explicit offset is given
             self._offset = datetime.timedelta(0)
 
     def utcoffset(self, dt):
+        """
+            Return the fixed UTC offset for this timezone.
+
+            Args:
+                dt: datetime instance (ignored, required by tzinfo API)
+
+            Returns:
+                datetime.timedelta: the stored UTC offset
+        """
 
         return self._offset
 
     def dst(self, dt):
+        """
+            Return the daylight saving time (DST) offset.
+
+            Note:
+                For S3DefaultTZ, DST is not modelled, so this always
+                returns timedelta(0).
+
+            Args:
+                dt: datetime instance (ignored, required by tzinfo API)
+
+            Returns:
+                datetime.timedelta: always zero
+        """
 
         return datetime.timedelta(0)
 
@@ -1828,8 +1890,10 @@ def s3_relative_datetime(dtexpr):
         dtexpr = dtexpr.strip()
         now = current.request.utcnow
         if dtexpr.lower() == "now":
+            # Special keyword: return the current UTC time directly
             return now
         elif dtexpr[0] not in "+-":
+            # Expressions must start with + or - to be considered valid
             return None
     else:
         return None
@@ -1840,6 +1904,8 @@ def s3_relative_datetime(dtexpr):
     f = 1
     valid = False
     then = now
+
+    # Iterate over all relative components in the expression, e.g. "+1Y-2M+3D"
     for m in RELATIVE.finditer(dtexpr):
 
         (sign, value, unit) = m.group(1, 2, 3)
@@ -1859,9 +1925,11 @@ def s3_relative_datetime(dtexpr):
         elif unit == "M":
             then += relativedelta(months = f * value)
         else:
+            # For days, hours, minutes and seconds use a normal timedelta
             then += timedelta(seconds = f * value * SECONDS[unit])
         valid = True
 
     return then if valid else None
+
 
 # END =========================================================================

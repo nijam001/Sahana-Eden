@@ -137,38 +137,61 @@ def get_form_record_data(form, table, fields):
         form.
 
         Args:
-            form: the FORM
-            table: the Table
-            fields: list of field names
+            form: the FORM (e.g. SQLFORM or custom FORM)
+            table: the Table object the form is based on
+            fields: list of field names to extract values for
 
         Returns:
-            a dict {fieldname: value}
+            a dict {fieldname: value}, where each field is guaranteed to appear:
+                - value from form.vars if present
+                - otherwise value from the existing record (if record_id given)
+                - otherwise the field default (if defined)
+                - otherwise None
     """
 
+    # Shorthand to access submitted values
     form_vars = form.vars
+
+    # This will contain the final data for each field
     form_data = {}
 
+    # Try to determine which record (if any) this form refers to
     record_id = get_form_record_id(form)
 
+    # Fields which we need to look up from the existing record in the database
     lookup = []
+
     for fn in fields:
         if fn in form_vars:
+            # If the form contains this field, use the submitted value
             form_data[fn] = form_vars[fn]
         elif record_id:
+            # Field not in the form, but we know the record:
+            # remember it so we can load it from the DB
             lookup.append(fn)
         else:
+            # No record_id available: fall back to the table default
             form_data[fn] = table[fn].default
 
     if lookup and record_id:
-        fields = [table[fn] for fn in lookup]
-        row = current.db(table.id == record_id).select(*fields,
-                                                       limitby = (0, 1),
-                                                       ).first()
-        form_data.update({fn: row[fn] for fn in lookup})
+        # Load the missing fields from the existing record in the DB
+        db = current.db
+        fields_to_select = [table[fn] for fn in lookup]
+
+        row = db(table.id == record_id).select(*fields_to_select,
+                                               limitby=(0, 1),
+                                               ).first()
+        if row:
+            form_data.update({fn: row[fn] for fn in lookup})
+        else:
+            # Record not found: be explicit and set them to None
+            form_data.update({fn: None for fn in lookup})
     else:
+        # Nothing to look up (either no missing fields or no record_id)
         form_data.update({fn: None for fn in lookup})
 
     return form_data
+
 
 # =============================================================================
 def accessible_pe_query(table = None,
@@ -582,83 +605,120 @@ def s3_mark_required(fields,
                      label_html=None,
                      map_names=None):
     """
-        Add asterisk to field label if a field is required
+        Add asterisk to field label if a field is required.
+
+        This inspects both:
+            - the field properties (required/notnull)
+            - and its validators (e.g. IS_EMPTY_OR, validators with mark_required)
 
         Args:
-            fields: list of fields (or a table)
-            mark_required: list of field names which are always required
-            label_html: function to render labels of requried fields
-            map_names: dict of alternative field names and labels
-                       {fname: (name, label)}, used for inline components
+            fields: list of Fields (or a Table to iterate over)
+            mark_required: list/tuple of field names which should always
+                           be treated as required even if the validator
+                           would normally allow empty input
+            label_html: callback to render labels for required fields,
+                        defaults to s3_required_label()
+            map_names: optional mapping for alternative field names + labels,
+                       used e.g. for inline components:
+                       {field.name: (name_in_form, label_in_form)}
 
         Returns:
-            tuple, (dict of form labels, has_required) with has_required
-            indicating whether there are required fields in this form
+            (labels, has_required) where:
+                labels: dict {fieldname: rendered label text}
+                has_required: True if any field is required
     """
 
     if not mark_required:
         mark_required = ()
 
     if label_html is None:
+        # Default HTML for required labels (adds " *")
         # @ToDo: DRY this setting with s3.ui.locationselector.js
         label_html = s3_required_label
 
     labels = {}
 
-    # Do we have any required fields?
-    _required = False
+    # Flag to mark if the form contains at least one required field
+    has_required = False
+
     for field in fields:
+
+        # Support renaming fields in the form (e.g. inline components)
         if map_names:
             fname, flabel = map_names[field.name]
         else:
             fname, flabel = field.name, field.label
+
         if not flabel:
+            # If there is no label at all, store empty string
             labels[fname] = ""
             continue
+
         if field.writable:
+
             validators = field.requires
+
+            # Special-case: if the validator is IS_EMPTY_OR and the field
+            # is not explicitly in mark_required, then we allow empty input
+            # even for notnull fields (e.g. when we populate them onvalidation)
             if isinstance(validators, IS_EMPTY_OR) and field.name not in mark_required:
-                # Allow notnull fields to be marked as not required
-                # if we populate them onvalidation
                 labels[fname] = "%s:" % flabel
                 continue
             else:
+                # Initial guess: required if explicitly marked or notnull
                 required = field.required or field.notnull or \
-                            field.name in mark_required
+                           field.name in mark_required
+
+            # If still not marked required, inspect validators more closely
             if not validators and not required:
                 labels[fname] = "%s:" % flabel
                 continue
+
             if not required:
+
                 if not isinstance(validators, (list, tuple)):
                     validators = [validators]
+
                 for v in validators:
+
+                    # Some validators expose "options" or "zero" attributes
+                    # which affect whether they require a non-empty value
                     if hasattr(v, "options"):
                         if hasattr(v, "zero") and v.zero is None:
+                            # Zero is not allowed => behaves like required
                             continue
+
+                    # Some validators explicitly define mark_required
                     if hasattr(v, "mark_required"):
                         if v.mark_required:
                             required = True
                             break
                         else:
                             continue
+
+                    # Fallback: try validate an empty value, and infer
+                    # requirement from whether it returns an error
                     try:
                         error = v("")[1]
                     except TypeError:
-                        # default validator takes no args
+                        # Some validators take no arguments
                         pass
                     else:
                         if error:
                             required = True
                             break
+
             if required:
-                _required = True
+                has_required = True
                 labels[fname] = label_html(flabel)
             else:
                 labels[fname] = "%s:" % flabel
+
         else:
+            # Field not writable: no need to mark as required
             labels[fname] = "%s:" % flabel
 
-    return (labels, _required)
+    return (labels, has_required)
 
 # =============================================================================
 def s3_addrow(form, label, widget, comment, formstyle, row_id, position=-1):
@@ -1241,24 +1301,33 @@ def s3_strip_markup(text):
 # =============================================================================
 class FormKey:
     """
-        Tool to facilitate XSRF protection for custom forms
+        Tool to facilitate XSRF protection for custom forms.
+
+        Typical usage:
+
+            formkey = FormKey("my_table/update/%s" % record_id).generate()
+            form.hidden = {"_formkey": formkey}
+
+        and on POST:
+
+            formkey = FormKey("my_table/update/%s" % record_id)
+            if not formkey.verify(request.post_vars):
+                raise HTTP(403)
+
+        Notes:
+            - "formname" should uniquely describe both the action
+              and (ideally) the target record to avoid collisions.
+            - Up to 10 concurrent tokens are stored per formname;
+              older ones are discarded.
+            - By default, a form key can only be used once. This can be
+              changed with the "invalidate" parameter of verify().
     """
 
     def __init__(self, formname):
         """
             Args:
-                formname: the name of the form (or action) that shall be
-                          protected
-
-            Notes:
-                - ideally, the formname should include both the description of
-                  the action and the record identity, e.g. "my_table/update/4",
-                  so as to avoid cross-form key collisions
-                - up to 10 concurrent instances of the form key are accepted,
-                  before the first key is dropped
-                - by default, a form cannot be submitted / an action cannot be
-                  performed with the same form key twice (see verify() how to
-                  override this behavior)
+                formname: name of the form/action that is being protected,
+                          e.g. "my_table/update/4"
         """
 
         self.formname = formname
@@ -1266,27 +1335,22 @@ class FormKey:
     # -------------------------------------------------------------------------
     def generate(self):
         """
-            Generates the form key and store it in the current session.
+            Generates a new form key and stores it in the current session.
 
             Returns:
-                the form key as str
+                the form key as a hex string
 
-            Note:
-                The form key shall be stored in the GET response (e.g. as
-                hidden input in the form), and then sent back by the client
-                with the POST request that shall be protected.
-
-            Example:
-                formkey = FormKey("modify-record/%s" % record_id).generate()
-                form.hidden = {"_formkey": formkey}
+            The key should be embedded in the response (e.g. hidden
+            form field) and submitted again with the POST request.
         """
 
         from uuid import uuid4
-        formkey = uuid4().hex
 
+        formkey = uuid4().hex
         keyname = "_formkey[%s]" % self.formname
 
         session = current.session
+        # Only keep the last 9 keys, then add this one (max 10 total)
         session[keyname] = session.get(keyname, [])[-9:] + [formkey]
 
         return formkey
@@ -1294,36 +1358,31 @@ class FormKey:
     # -------------------------------------------------------------------------
     def verify(self, post_vars, variable="_formkey", invalidate=True):
         """
-            Verify the form key returned from the client.
+            Verify the form key returned by the client.
 
             Args:
-                post_vars: the POST vars dict
-                variable: the name of the POST variable containing the form key
-                invalidate: remove the form key when successful, so that it
-                            cannot be reused for another submission of the
-                            same form; this may need disabling for Ajax (unless
-                            key renewal is implemented)
+                post_vars: Storage/dict containing the POST variables
+                variable: the field name that carries the form key
+                invalidate: if True (default), consume the key on success,
+                            so that it cannot be reused
 
             Returns:
-                True|False whether the formkey is valid
-
-            Example:
-                formkey = FormKey("modify-record/%s" % record_id)
-                if not formkey.verify(request.post_vars):
-                    raise HTTP(403)
+                True if the key is valid, False otherwise
         """
 
         formkey = post_vars.get(variable)
-
         keyname = "_formkey[%s]" % self.formname
 
         keys = current.session.get(keyname, [])
         if not formkey or formkey not in keys:
             return False
+
         if invalidate:
+            # Remove the key so it cannot be reused (prevents replay)
             keys.remove(formkey)
 
         return True
+
 
 # =============================================================================
 def system_info():
