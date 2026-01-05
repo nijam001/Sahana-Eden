@@ -767,7 +767,7 @@ def ldata():
     import time
     
     # Cache configuration
-    CACHE_TTL = 10  # 5 minutes cache expiry
+    CACHE_TTL = 60  # 1 minutes cache expiry
     
     # Generate cache key
     cache_key = "ldata_%s_%s_%s" % (location_id, output_level, language if translate else "en")

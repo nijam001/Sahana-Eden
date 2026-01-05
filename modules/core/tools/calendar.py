@@ -171,7 +171,7 @@ class S3DateTime:
     # -----------------------------------------------------------------------------
     @classmethod
     def to_local(cls, dt):
-          """
+        """
         Convert a datetime or date object into the application's local timezone.
 
         This method handles:

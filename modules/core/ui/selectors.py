@@ -856,7 +856,7 @@ class LocationSelector(FormWidget):
         else:
             query &= (gtable.deleted == False) & \
                      (gtable.end_date == None)
-            fields, left = self._get_location_fields(gtable, translate, language)
+            fields, left = LocationSelector._get_location_fields(gtable, translate, language)
             locations = db(query).select(*fields, left=left)
 
         location_dict = {}
