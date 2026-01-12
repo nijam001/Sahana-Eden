@@ -98,7 +98,35 @@ def office_type():
 
 # -----------------------------------------------------------------------------
 def organisation():
-    """ RESTful CRUD controller """
+    """
+    RESTful CRUD controller for Organisation Registry.
+
+    Purpose
+    -------
+    This function serves as a gateway controller for organisation-related
+    CRUD operations in Sahana-Eden. It intentionally contains minimal logic
+    and delegates request handling to the model-layer controller to ensure
+    consistent behaviour and unified menus across modules.
+
+    Delegation
+    ----------
+    Delegates request processing to:
+        - s3db.org_organisation_controller()
+
+    Maintenance Notes
+    -----------------
+    As a gateway controller, changes to this entry point may propagate to:
+        - core CRUD engine (crud_controller)
+        - authorization and access control
+        - preprocessing hooks (s3.prep)
+        - database operations on org_organisation
+        - output representations (HTML / JSON / S3JSON)
+
+    This documentation is added as preventive maintenance to reduce the
+    risk of unintended ripple effects and to support future maintenance
+    and developer onboarding.
+    """
+
 
     # Defined in the Model for use from Multiple Controllers for unified menus
     return s3db.org_organisation_controller()
