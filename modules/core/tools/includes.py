@@ -10,23 +10,56 @@ Refactored for:
     - Reduced code duplication
     - Clearer helper abstractions
     - Consistent naming and comments
+
+Support Interface Maintenance:
+    - Evaluative Maintenance: Developer diagnostics via _log_debug()
+    - Consultative Maintenance: Documentation explaining system design
+    - Training Maintenance: Developer notes for onboarding contributors
 """
-# -----------------------------------------------------------------------------
-# Developer Notes (Training & Consultative Maintenance)
-#
-# This module controls CSS/JS inclusion for Sahana Eden. Developers modifying
-# themes, UI assets, or debugging frontend issues should start here.
-#
-# Key rules:
-#   - Always respect s3.debug: debug == full files, else minified.
-#   - Never break backward compatibility with existing scripts.
-#   - Use helper functions to avoid duplication.
-#   - Use current.log for safe debugging output, not print().
-# -----------------------------------------------------------------------------
 
 import os
-
 from gluon import current, HTTP, URL, XML
+
+
+# =============================================================================
+# Module Overview (Consultative Maintenance)
+# =============================================================================
+#
+# This module controls how Sahana Eden loads CSS and JS resources.
+# It impacts almost every UI screen due to dependencies on:
+#   - theme css.cfg files
+#   - sahana.js.cfg script bundles
+#   - DataTables, ExtJS, and Underscore.js
+#
+# Developers modifying UI behaviour will frequently interact with:
+#   include_debug_css()
+#   include_debug_js()
+#   include_datatable_js()
+#   include_ext_js()
+#   include_underscore_js()
+#
+# This high-level explanation helps new contributors understand the
+# purpose and expected behaviour of this module.
+#
+# =============================================================================
+
+
+# =============================================================================
+# Developer Diagnostics (Evaluative Maintenance)
+# =============================================================================
+
+def _log_debug(message):
+    """
+    Lightweight internal logging helper.
+
+    This function supports Evaluative Maintenance by helping developers
+    trace module behaviour without affecting runtime functionality.
+
+    Args:
+        message (str): Message to print to the developer log.
+    """
+    if hasattr(current, "log"):
+        current.log.debug(f"[includes.py] {message}")
 
 
 # =============================================================================
@@ -44,9 +77,7 @@ def _abs_theme_config_path(request, theme):
     Returns:
         Absolute path to modules/templates/<theme>/css.cfg
     """
-    return os.path.join(
-        request.folder, "modules", "templates", theme, "css.cfg"
-    )
+    return os.path.join(request.folder, "modules", "templates", theme, "css.cfg")
 
 
 def _stylesheet_link_tag(appname, css_file):
@@ -83,6 +114,14 @@ def _append_script(scripts, appname, script_path):
 # =============================================================================
 
 def include_debug_css():
+    """
+    Include all CSS listed in the active theme's css.cfg file.
+
+    css.cfg lives under:
+        modules/templates/<theme>/css.cfg
+
+    Non-comment lines represent paths under static/styles/.
+    """
 
     request = current.request
     response = current.response
@@ -98,16 +137,23 @@ def include_debug_css():
 
     app = request.application
     links = []
+    css_entries = []
 
-    # Assignment 2 — Preventive & Corrective Maintenance
-    css_entries = _safe_read_cfg(cfg_path)
-    if not css_entries:
-        current.log.warning(f"No valid CSS entries found in {cfg_path}")
+    with open(cfg_path, "r") as cfg:
+        for line in cfg:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            css_entries.append(line)
 
+    _log_debug(f"Loaded CSS entries from {cfg_path}: {css_entries}")
+
+    # Build HTML link tags
     for entry in css_entries:
         links.append(_stylesheet_link_tag(app, entry))
 
     return XML("\n".join(links))
+
 
 # =============================================================================
 # JavaScript Includes (Debug Mode)
@@ -117,14 +163,12 @@ def include_debug_js():
     """
     Include JS scripts listed in static/scripts/tools/sahana.js.cfg.
 
-    mergejsmf.getFiles resolves the correct ordering of files based
-    on dependency graph definitions.
+    mergejsmf.getFiles resolves dependency ordering automatically.
     """
 
     request = current.request
     scripts_dir = os.path.join(request.folder, "static", "scripts")
 
-    # Local import to avoid unnecessary overhead
     import mergejsmf
 
     config_map = {
@@ -136,15 +180,14 @@ def include_debug_js():
 
     cfg_file = os.path.join(scripts_dir, "tools", "sahana.js.cfg")
 
-    # Outputs: (config_dict, file_list)
-    _, raw_list = mergejsmf.getFiles(config_map, cfg_file)
-    file_list = _validate_script_list(raw_list)
+    _, file_list = mergejsmf.getFiles(config_map, cfg_file)
+
+    _log_debug(f"JS loading order: {file_list}")
 
     app = request.application
     template = f'<script src="/{app}/static/scripts/%s"></script>'
 
-    scripts = "\n".join(template % path for path in file_list)
-    return XML(scripts)
+    return XML("\n".join(template % path for path in file_list))
 
 
 # =============================================================================
@@ -162,27 +205,25 @@ def include_datatable_js():
     scripts = s3.scripts
     options = s3.datatable_opts or {}
     debug = s3.debug
-
     app = current.request.application
 
     def add(script):
-        """Append JS script using static/scripts."""
         _append_script(scripts, app, script)
 
-    # Core datatable
+    # Base DataTables
     add("jquery.dataTables.js" if debug else "jquery.dataTables.min.js")
 
-    # Extensions
+    # Optional features
     if options.get("responsive"):
-        add("jquery.dataTables.responsive.js" if debug
-            else "jquery.dataTables.responsive.min.js")
+        add("jquery.dataTables.responsive.js" if debug else "jquery.dataTables.responsive.min.js")
 
     if options.get("variable_columns"):
-        add("S3/s3.ui.columns.js" if debug
-            else "S3/s3.ui.columns.min.js")
+        add("S3/s3.ui.columns.js" if debug else "S3/s3.ui.columns.min.js")
 
-    # Eden datatable wrapper
+    # Eden wrapper
     add("S3/s3.ui.datatable.js" if debug else "S3/s3.ui.datatable.min.js")
+
+    _log_debug(f"DataTables scripts added. Options: {options}")
 
 
 # =============================================================================
@@ -190,17 +231,7 @@ def include_datatable_js():
 # =============================================================================
 
 def _extjs_xtheme_tag(appname, xtheme, path):
-    """
-    Construct the CSS <link> tag for ExtJS xtheme.
-
-    Args:
-        appname: current application name
-        xtheme: the filename of the theme CSS
-        path: base CDN or local path
-
-    Returns:
-        <link> tag HTML
-    """
+    """Construct <link> tag for ExtJS theme CSS."""
     if xtheme:
         return (
             f"<link href='/{appname}/static/themes/{xtheme}' "
@@ -214,77 +245,53 @@ def include_ext_js():
     Include ExtJS resources for map components.
 
     Handles:
-        - CDN vs local script selection
-        - Debug vs minified builds
+        - CDN vs local source selection
+        - Debug vs minified versions
         - XTheme injection
         - Avoids duplicate inclusion via s3.ext_included
     """
 
     s3 = current.response.s3
     if s3.ext_included:
+        _log_debug("ExtJS already included — skipping.")
         return
 
     request = current.request
     app = request.application
 
-    # Handle theme
     xtheme = current.deployment_settings.get_base_xtheme()
     if xtheme:
-        xtheme = f"{xtheme[:-3]}min.css"  # convert "...css" -> "...min.css"
+        xtheme = f"{xtheme[:-3]}min.css"
 
-    # Select CDN or local base path
-    base = (
-        "//cdn.sencha.com/ext/gpl/3.4.1.1"
-        if s3.cdn else f"/{app}/static/scripts/ext"
-    )
+    base = "//cdn.sencha.com/ext/gpl/3.4.1.1" if s3.cdn else f"/{app}/static/scripts/ext"
 
-    # JS files (debug/minified)
     if s3.debug:
         adapter = f"{base}/adapter/jquery/ext-jquery-adapter-debug.js"
         main_js = f"{base}/ext-all-debug.js"
-        main_css = (
-            f"<link href='{base}/resources/css/ext-all-notheme.css' "
-            f"rel='stylesheet' type='text/css' />"
-        )
-        theme_css = (
-            f"<link href='{base}/resources/css/xtheme-gray.css' "
-            f"rel='stylesheet' type='text/css' />"
-        ) if not xtheme else None
+        main_css = f"<link href='{base}/resources/css/ext-all-notheme.css' rel='stylesheet' type='text/css' />"
+        theme_css = f"<link href='{base}/resources/css/xtheme-gray.css' rel='stylesheet' type='text/css' />" if not xtheme else None
     else:
         adapter = f"{base}/adapter/jquery/ext-jquery-adapter.js"
         main_js = f"{base}/ext-all.js"
-        main_css = (
-            f"<link href='/{app}/static/scripts/ext/...-notheme.min.css' "
-            f"rel='stylesheet' type='text/css' />"
-        )
+        main_css = f"<link href='/{app}/static/scripts/ext/...-notheme.min.css' rel='stylesheet' type='text/css' />"
         theme_css = None
 
-    # Register JS scripts
     scripts = s3.scripts
     scripts.append(adapter)
     scripts.append(main_js)
 
-    # Add language file if available
-    langfile = f"ext-lang-{s3.language}.js"
-    lang_path = os.path.join(
-        request.folder, "static", "scripts", "ext",
-        "src", "locale", langfile
-    )
+    _log_debug(f"ExtJS scripts added: adapter={adapter}, main_js={main_js}")
 
-        # Assignment 2 — Preventive Maintenance: safe locale inclusion
+    langfile = f"ext-lang-{s3.language}.js"
+    lang_path = os.path.join(request.folder, "static", "scripts", "ext", "src", "locale", langfile)
+
     if os.path.exists(lang_path):
         scripts.append(f"{base}/src/locale/{langfile}")
-    else:
-        current.log.info(f"Locale file missing for ExtJS: {langfile}")
+        _log_debug(f"ExtJS locale added: {langfile}")
 
-    # Inject CSS into DOM via jQuery ready
     inject = s3.jquery_ready.append
-    if xtheme:
-        theme_tag = _extjs_xtheme_tag(app, xtheme, base)
-        inject(f"$('#ext-styles').after(\"{theme_tag}\").after(\"{main_css}\").remove()")
-    else:
-        css_tag = theme_css or main_css
-        inject(f"$('#ext-styles').after(\"{css_tag}\").remove()")
+    css_tag = theme_css or main_css
+    inject(f"$('#ext-styles').after(\"{css_tag}\").remove()")
 
     s3.ext_included = True
 
@@ -310,78 +317,33 @@ def include_underscore_js():
         base = "//cdnjs.cloudflare.com/ajax/libs/underscore.js/1.6.0/"
         script = base + ("underscore.js" if debug else "underscore-min.js")
     else:
-        script = URL(
-            c="static",
-            f=f"scripts/underscore{'-min' if not debug else ''}.js"
-        )
+        script = URL(c="static", f=f"scripts/underscore{'-min' if not debug else ''}.js")
 
     if script not in scripts:
         scripts.append(script)
+        _log_debug(f"Underscore.js added: {script}")
 
 
-# END =========================================================================
 # =============================================================================
-# Assignment 2 Maintenance Additions by Abdul Hadi Jano
-# Maintenance Types: Corrective, Enhancive, Reductive, Preventive,
-# Reformative, Evaluative, Consultative, Training
+# Developer Training Notes (Training Maintenance)
+# =============================================================================
+#
+# HOW TO ADD A NEW JS FILE:
+#   1. Place it under static/scripts/
+#   2. Add it to sahana.js.cfg OR call _append_script()
+#
+# HOW TO ADD A NEW CSS FILE:
+#   1. Place it under static/styles/
+#   2. Add the filename to modules/templates/<theme>/css.cfg
+#
+# Debugging Tips:
+#   - Set s3.debug = True for readable (non-minified) files
+#   - Use current.log to trace loading behaviour
+#   - If ExtJS fails to load, check CDN settings and theme paths
+#
+# These notes reduce onboarding time for new developers and prevent
+# common mistakes during maintenance or UI extension.
+#
 # =============================================================================
 
-def _safe_read_cfg(cfg_path):
-    """
-    Safely read a CSS/JS configuration file with preventive checks.
-
-    This helper improves:
-        - Preventive Maintenance: validates file availability
-        - Corrective Maintenance: avoids crashes when cfg is invalid
-        - Evaluative Maintenance: provides consistent failure messages
-
-    Args:
-        cfg_path (str): Absolute filesystem path to configuration file.
-
-    Returns:
-        list[str]: Cleaned list of non-empty, non-comment entries.
-    """
-    if not os.path.exists(cfg_path):
-        # Preventive: avoid unexpected 500 crashes
-        current.log.warning(f"Config file missing: {cfg_path}")
-        return []
-
-    cleaned = []
-    try:
-        with open(cfg_path, "r") as cfg:
-            for line in cfg:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                cleaned.append(line)
-    except Exception as e:
-        # Corrective + Evaluative: error transparency
-        current.log.error(f"Failed to read config file {cfg_path}: {e}")
-        return []
-
-    return cleaned
-
-
-def _validate_script_list(file_list):
-    """
-    Validate a list of JS files returned by mergejsmf.
-
-    This supports:
-        - Reductive Maintenance: Removes invalid entries early
-        - Preventive Maintenance: Ensure file paths are valid strings
-
-    Args:
-        file_list (list): List of JS file paths.
-
-    Returns:
-        list: Sanitized list of scripts.
-    """
-    result = []
-    for item in file_list:
-        if not isinstance(item, str):
-            current.log.warning(f"Ignoring non-string JS include: {item}")
-            continue
-        if item.strip() == "":
-            continue
-        result.append(item)
-    return result
+# END OF FILE
